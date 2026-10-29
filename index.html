@@ -1,0 +1,199 @@
+
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>MenuForTwo</title>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+:root{font-family:system-ui,sans-serif;color:#26352d;background:#f6f7f2}
+*{box-sizing:border-box}body{margin:0}header{background:#285c46;color:white;padding:24px 18px}
+h1{margin:0;font-size:28px}header p{margin:5px 0 0;color:#e0eee4}
+main{max-width:850px;margin:auto;padding:18px}
+.card{background:white;border:1px solid #e0e6dc;border-radius:16px;padding:17px;margin:14px 0}
+input,select,button{font:inherit;padding:11px;border-radius:9px;border:1px solid #ccd5ca;max-width:100%}
+input,select{width:100%;margin:5px 0 10px}
+button{background:#285c46;color:white;border:0;cursor:pointer;margin:4px 3px 4px 0}
+button.secondary{background:#e6eee7;color:#285c46}
+nav{display:flex;gap:7px;flex-wrap:wrap;margin:14px 0}
+nav button{flex:1;min-width:100px}
+.item{border-top:1px solid #e8ece5;padding:12px 0;overflow-wrap:anywhere}
+.small{color:#657368;font-size:14px}.hidden{display:none}
+h2{font-size:20px;margin-top:0}.status{padding:10px;background:#edf4ed;border-radius:9px}
+</style>
+</head>
+<body>
+<header>
+<h1>🥗 MenuForTwo</h1>
+<p>Планируйте меню и покупки вместе</p>
+</header>
+<main>
+<section class="card" id="auth">
+<h2>Вход в аккаунт</h2>
+<p class="small">Войдите или создайте аккаунт с электронной почтой.</p>
+<label>Email</label><input id="email" type="email" autocomplete="email" placeholder="you@example.com">
+<label>Пароль</label><input id="password" type="password" autocomplete="current-password" placeholder="Не менее 6 символов">
+<button id="login">Войти</button>
+<button class="secondary" id="register">Регистрация</button>
+<p id="authMsg" class="small"></p>
+</section>
+
+<section id="app" class="hidden">
+<div class="card">
+<div id="who" class="status"></div>
+<button class="secondary" id="logout">Выйти</button>
+<nav>
+<button data-tab="menu">📅 Меню</button>
+<button data-tab="recipes">📖 Рецепты</button>
+<button data-tab="shopping">🛒 Покупки</button>
+</nav>
+</div>
+
+<section class="card" id="menu">
+<h2>Меню на неделю</h2>
+<label>Дата</label><input type="date" id="menuDate">
+<label>Приём пищи</label>
+<select id="mealSlot"><option value="breakfast">Завтрак</option><option value="lunch">Обед</option><option value="dinner" selected>Ужин</option></select>
+<label>Название блюда</label><input id="dish" placeholder="Например, курица с рисом">
+<button id="addDish">Добавить в меню</button>
+<div id="menuList"></div>
+</section>
+
+<section class="card hidden" id="recipes">
+<h2>Рецепты</h2>
+<p class="small">Рецепты из общей базы. Добавление и поиск блюд появятся по мере наполнения базы.</p>
+<input id="recipeSearch" placeholder="Поиск рецепта">
+<div id="recipeList"></div>
+</section>
+
+<section class="card hidden" id="shopping">
+<h2>Общий список покупок</h2>
+<label>Продукт</label><input id="itemName" placeholder="Например, молоко">
+<label>Количество</label><input id="itemQty" placeholder="1 литр">
+<button id="addItem">Добавить продукт</button>
+<div id="shoppingList"></div>
+</section>
+</section>
+<p class="small">MenuForTwo · Общие данные доступны только согласно правилам Supabase.</p>
+</main>
+<script>
+const SUPABASE_URL = 'https://wyjngpfmpsnxlcfskvov.supabase.co';
+const SUPABASE_KEY = 'sb_publishable_Z3AU2jQeZTgCADjMqUcm0g_DSJG3GGX';
+const db = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+const $ = id => document.getElementById(id);
+let currentUser = null;
+
+function message(id, text){ $(id).textContent = text; }
+function today(){ return new Date().toLocaleDateString('en-CA'); }
+$('menuDate').value = today();
+
+$('login').onclick = async () => {
+ const {error} = await db.auth.signInWithPassword({email:$('email').value.trim(),password:$('password').value});
+ message('authMsg',error ? error.message : 'Вход выполнен');
+};
+$('register').onclick = async () => {
+ const {error} = await db.auth.signUp({email:$('email').value.trim(),password:$('password').value});
+ message('authMsg',error ? error.message : 'Проверь почту для подтверждения регистрации, если оно включено.');
+};
+$('logout').onclick = () => db.auth.signOut();
+
+function showTab(tab){
+ ['menu','recipes','shopping'].forEach(id=>$(id).classList.toggle('hidden',id!==tab));
+}
+document.querySelectorAll('[data-tab]').forEach(b=>b.onclick=()=>showTab(b.dataset.tab));
+
+async function refresh(){
+ const {data:{session}} = await db.auth.getSession();
+ currentUser = session?.user || null;
+ $('auth').classList.toggle('hidden',!!currentUser);
+ $('app').classList.toggle('hidden',!currentUser);
+ if(!currentUser)return;
+ $('who').textContent = 'Вы вошли: '+currentUser.email;
+ await Promise.all([loadMenu(),loadShopping(),loadRecipes()]);
+}
+async function loadMenu(){
+ const {data,error} = await db.from('weekly_menu')
+ .select('menu_date,meal_slot,recipe_name,selected_by')
+ .order('menu_date',{ascending:true});
+ if(error){$('menuList').textContent='Не удалось загрузить меню: '+error.message;return;}
+ $('menuList').innerHTML='';
+ (data||[]).forEach(row=>{
+  const div=document.createElement('div');div.className='item';
+  const date=document.createElement('strong');date.textContent=row.menu_date+' · '+row.meal_slot;
+  const name=document.createElement('div');name.textContent=row.recipe_name||'Блюдо не указано';
+  div.append(date,name);$('menuList').append(div);
+ });
+ if(!data?.length)$('menuList').textContent='Пока нет выбранных блюд.';
+}
+$('addDish').onclick=async()=>{
+ const name=$('dish').value.trim();if(!name)return;
+ const {error}=await db.from('weekly_menu').insert({
+  menu_date:$('menuDate').value,
+  meal_slot:$('mealSlot').value,
+  recipe_name:name,
+  selected_by:currentUser.id,
+  updated_at:new Date().toISOString()
+ });
+ if(error){alert('Не удалось добавить блюдо: '+error.message);return;}
+ $('dish').value='';await loadMenu();
+};
+async function loadShopping(){
+ const {data,error}=await db.from('shopping_items')
+ .select('id,item_name,quantity,is_bought')
+ .order('created_at',{ascending:false});
+ if(error){$('shoppingList').textContent='Не удалось загрузить покупки: '+error.message;return;}
+ $('shoppingList').innerHTML='';
+ (data||[]).forEach(item=>{
+  const div=document.createElement('div');div.className='item';
+  const label=document.createElement('label');
+  const check=document.createElement('input');check.type='checkbox';check.checked=!!item.is_bought;check.style.width='auto';
+  check.onchange=async()=>{
+   const {error}=await db.from('shopping_items').update({is_bought:check.checked}).eq('id',item.id);
+   if(error){alert(error.message);loadShopping();}
+  };
+  label.append(check,document.createTextNode(' '+item.item_name+(item.quantity?' — '+item.quantity:'')));
+  div.append(label);
+  const del=document.createElement('button');del.className='secondary';del.textContent='Удалить';
+  del.onclick=async()=>{
+   const {error}=await db.from('shopping_items').delete().eq('id',item.id);
+   if(error)alert(error.message);else loadShopping();
+  };
+  div.append(del);$('shoppingList').append(div);
+ });
+ if(!data?.length)$('shoppingList').textContent='Список покупок пока пуст.';
+}
+$('addItem').onclick=async()=>{
+ const name=$('itemName').value.trim();if(!name)return;
+ const {error}=await db.from('shopping_items').insert({
+  item_name:name,quantity:$('itemQty').value.trim()||null,
+  is_bought:false,added_by:currentUser.id
+ });
+ if(error){alert('Не удалось добавить продукт: '+error.message);return;}
+ $('itemName').value='';$('itemQty').value='';await loadShopping();
+};
+async function loadRecipes(){
+ const {data,error}=await db.from('recipes')
+ .select('id,title,category,ingredients,instructions')
+ .order('title');
+ if(error){$('recipeList').textContent='Не удалось загрузить рецепты: '+error.message;return;}
+ const render=()=>{
+  const q=$('recipeSearch').value.toLowerCase();
+  $('recipeList').innerHTML='';
+  (data||[]).filter(r=>(r.title||'').toLowerCase().includes(q)).forEach(r=>{
+   const div=document.createElement('div');div.className='item';
+   const title=document.createElement('strong');title.textContent=r.title;
+   const desc=document.createElement('p');desc.textContent=r.category||'';
+   const details=document.createElement('p');details.className='small';
+   details.textContent=(Array.isArray(r.ingredients)?r.ingredients.join(', '):JSON.stringify(r.ingredients||[]))+(r.instructions?'\n'+r.instructions:'');
+   div.append(title,desc,details);$('recipeList').append(div);
+  });
+  if(!data?.length)$('recipeList').textContent='База рецептов пока пустая.';
+ };
+ $('recipeSearch').oninput=render;render();
+}
+db.auth.onAuthStateChange(()=>setTimeout(refresh,0));
+refresh();
+</script>
+</body>
+</html>
